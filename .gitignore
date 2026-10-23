@@ -1,0 +1,29 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment / secrets
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Exclude lab reference files (not part of our project)
+lab5/
+
+# Exclude LaTeX report files (kept locally)
+report_thermal_fire_detection.tex
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+
+# Keep thermal_photos/ OUT of git
+# (photos will be manually selected and placed in photos/ folder)
+thermal_photos/
+
+# Runtime audit and queue logs
+*.csv

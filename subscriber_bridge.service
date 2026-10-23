@@ -1,0 +1,17 @@
+[Unit]
+Description=MQTT Subscriber Bridge - InfluxDB & Discord Alerting (ECE490 IoT)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi
+ExecStart=/usr/bin/python3 /home/pi/subscriber_bridge.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

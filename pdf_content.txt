@@ -1,0 +1,30 @@
+﻿=== PAGE 1 ===
+Adaptive Thermal Fire Detection Node
+Subject:
+This project focuses on the design and implementation of an adaptive
+IoT edge node for detecting possible fire-like thermal anomalies using a Raspberry
+Pi and an MLX90640 thermal camera. The system must collect thermal frames from
+the camera, process them locally, extract temperature-based features and publish
+the resulting measurements to an MQTT broker. The frame acquisition rate must be
+adaptive, allowing the node to operate at a low sampling rate under normal
+conditions and increase the sampling rate when suspicious thermal activity is
+observed. In case of a possible fire-like event, the system must publish an MQTT
+alert and, when necessary, transmit a thermal heatmap encoded in base64.
+Objectives:
+έΩΠ Design an IoT edge monitoring system for thermal anomaly detection
+έΩΠ Integrate the MLX90640 thermal camera with Raspberry Pi using I2C
+έΩΠ Collect thermal frames periodically from the sensor
+έΩΠ Extract frame-level metrics such as minimum, average and maximum
+temperature
+έΩΠ Calculate hot pixel count, hot area ratio and temperature variation over time
+έΩΠ Implement adaptive sampling with normal, watch and alert operating modes
+έΩΠ Publish periodic telemetry messages through MQTT
+έΩΠ Generate alerts through MQTT when possible fire-like activity is detected
+έΩΠ Generate thermal heatmaps from the 32x24 thermal frames
+έΩΠ Transmit selected heatmaps through MQTT using base64 encoding
+έΩΠ Store measurements and alerts locally for evaluation
+έΩΠ Evaluate the system using controlled experiments and discuss limitations
+Hardware list
+:
+έΩΠ 1x Raspberry Pi
+έΩΠ 1x MLX90640 Thermal Camera
