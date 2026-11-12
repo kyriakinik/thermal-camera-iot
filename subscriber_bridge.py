@@ -1,14 +1,13 @@
 """
-ECE490 Internet of Things - Central MQTT Subscriber Bridge
+ECE490: Internet of Things - Central MQTT Subscriber Bridge
 Student: Kyriaki Nikolopoulou
 Course: ECE490, University of Thessaly
 
-Role:
-- Subscribes to MQTT telemetry, alerts, and heatmaps from Edge Nodes.
-- InfluxDB Storage: Automatically ingests sensor metrics into InfluxDB for Grafana.
-- Store-and-Forward Fail-Safe: If InfluxDB fails, records are saved into 'influx_failed_queue.csv'.
-- Discord Incident Alerts: Forwards fire alarms and embedded thermal heatmaps to Discord.
-- Offloads heavy HTTP/HTTPS requests and image uploads from edge nodes (Raspberry Pi).
+Description:
+Central backend listener running on server or PC. Subscribes to edge node
+telemetry, alerts, and heatmaps over MQTT. Handles time-series persistence
+into InfluxDB (with offline store-and-forward fail-safe) and dispatches
+rich incident alerts to Discord with embedded thermal heatmaps.
 """
 
 import time
@@ -21,53 +20,54 @@ from requests.auth import HTTPBasicAuth
 from datetime import datetime
 import paho.mqtt.client as mqtt
 
-# Optional loading of .env file
+# Optional environment variable support
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-# ==========================================
-# CONFIGURATION
-# ==========================================
+# ==============================================================================
+# CONFIGURATION & THRESHOLDS
+# ==============================================================================
 
+# MQTT Broker parameters
 BROKER = os.getenv("MQTT_BROKER", "194.177.207.38")
 PORT   = int(os.getenv("MQTT_PORT", "1883"))
 
-# MQTT Credentials
+# Authentication credentials
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", "team1")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 
-# MQTT Topics (Wildcard '+' listens to edge08 or any team node)
+# Wildcard topics to monitor all reporting edge nodes
 TELEMETRY_TOPIC_FILTER = "iot/+/telemetry/thermal"
 ALERT_TOPIC_FILTER     = "iot/+/alerts/thermal"
 HEATMAP_TOPIC_FILTER   = "iot/+/heatmaps/thermal"
 
-# InfluxDB Configuration
+# InfluxDB time-series storage parameters
 INFLUXDB_URL = os.getenv("INFLUXDB_URL", "http://194.177.207.38:8086")
 DB_USERNAME  = os.getenv("DB_USERNAME", "edge08")
 DB_PASSWORD  = os.getenv("DB_PASSWORD", "")
 DEFAULT_DB   = os.getenv("DB_NAME", "edge08_db")
 
-# Discord Webhook for Emergency Fire Notifications
+# Discord Webhook configuration
 DISCORD_WEBHOOK_URL    = os.getenv("DISCORD_WEBHOOK_URL", "")
-ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", "10"))  # Prevent spamming alerts within 10s
+ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", "10"))
 
-# Local Fail-Safe CSV files
+# Local storage paths for fallback queue and incident history
 INFLUX_FAILED_FILE = "influx_failed_queue.csv"
 ALERTS_LOG_FILE    = "alerts_history.csv"
 
-# Global state tracking
+# In-memory tracking of alert timestamps and pending payloads per node
 last_alert_time_by_team = {}
 pending_alert_by_team   = {}
 
-# ==========================================
+# ==============================================================================
 # INITIALIZATION & LOGGING HELPERS
-# ==========================================
+# ==============================================================================
 
 def init_csv_storage():
-    """Ensure dedicated fallback and alert CSV files exist with headers."""
+    """Initializes local CSV log files for fallback queue and incident history."""
     try:
         if not os.path.exists(INFLUX_FAILED_FILE) or os.path.getsize(INFLUX_FAILED_FILE) == 0:
             with open(INFLUX_FAILED_FILE, mode='a', newline='') as f:
@@ -92,7 +92,7 @@ def init_csv_storage():
 
 
 def log_failed_influx(team: str, metrics: dict, line_protocol: str, error_msg: str):
-    """Store failed InfluxDB records in separate fallback CSV file."""
+    """Appends failed InfluxDB write requests to offline fallback queue."""
     try:
         with open(INFLUX_FAILED_FILE, mode='a', newline='') as f:
             writer = csv.writer(f)
@@ -108,13 +108,13 @@ def log_failed_influx(team: str, metrics: dict, line_protocol: str, error_msg: s
                 line_protocol,
                 str(error_msg)
             ])
-        print(f"  [FALLBACK] 💾 Failed InfluxDB write recorded into '{INFLUX_FAILED_FILE}'")
+        print(f"  [FALLBACK] Failed InfluxDB write logged to '{INFLUX_FAILED_FILE}'")
     except Exception as e:
         print(f"[ERROR] Writing to {INFLUX_FAILED_FILE} failed: {e}")
 
 
 def log_alert_history(team: str, alert_info: dict):
-    """Store detected incident into persistent alerts history CSV."""
+    """Records confirmed fire incident metadata to persistent audit log."""
     try:
         with open(ALERTS_LOG_FILE, mode='a', newline='') as f:
             writer = csv.writer(f)
@@ -128,22 +128,23 @@ def log_alert_history(team: str, alert_info: dict):
                 alert_info.get('hot_area_ratio', 'N/A'),
                 alert_info.get('rate_of_rise', 0.0)
             ])
-        print(f"  [AUDIT] 🚨 Incident for node '{team}' logged to '{ALERTS_LOG_FILE}'")
+        print(f"  [AUDIT] Incident for node '{team}' logged to '{ALERTS_LOG_FILE}'")
     except Exception as e:
         print(f"[ERROR] Writing to {ALERTS_LOG_FILE} failed: {e}")
 
-# ==========================================
+# ==============================================================================
 # INFLUXDB INGESTION
-# ==========================================
+# ==============================================================================
 
 def forward_to_influx(team: str, metrics: dict) -> bool:
-    """Writes telemetry received from MQTT into InfluxDB."""
+    """Formats telemetry to InfluxDB Line Protocol and writes via HTTP POST."""
     min_temp = metrics.get('min_temp', 0.0)
     avg_temp = metrics.get('avg_temp', 0.0)
     max_temp = metrics.get('max_temp', 0.0)
     hot_pixels = metrics.get('hot_pixel_count', 0)
     rate_of_rise = metrics.get('rate_of_rise', 0.0)
 
+    # InfluxDB line protocol: measurement,tag_set field_set timestamp
     line = (
         f"thermal_data,team={team} "
         f"min_temp={min_temp:.2f},"
@@ -173,14 +174,15 @@ def forward_to_influx(team: str, metrics: dict) -> bool:
         log_failed_influx(team, metrics, line, str(e))
         return False
 
-# ==========================================
+# ==============================================================================
 # DISCORD INCIDENT ALERT DISPATCH
-# ==========================================
+# ==============================================================================
 
 def send_discord_alert(alert_info: dict, image_bytes: bytes = None):
-    """Sends styled rich embed card to Discord with attached thermal heatmap."""
+    """Sends a rich styled embed card to Discord with attached thermal heatmap."""
     if not DISCORD_WEBHOOK_URL:
-        return
+        print("  [DISCORD] DISCORD_WEBHOOK_URL not configured. Skipping dispatch.")
+        return False
 
     team_name = alert_info.get("team", "edge08")
     max_t = alert_info.get("max_temp", "N/A")
@@ -191,7 +193,7 @@ def send_discord_alert(alert_info: dict, image_bytes: bytes = None):
     embed = {
         "title": "🚨 THERMAL ANOMALY / FIRE DETECTED",
         "description": f"**Προσοχή:** Επιβεβαιώθηκε κρίσιμη θερμική ανωμαλία στον κόμβο `{team_name}`!",
-        "color": 15158332,  # Crimson Red
+        "color": 15158332,
         "fields": [
             {
                 "name": "🌡️ Μέγιστη Θερμοκρασία",
@@ -239,10 +241,6 @@ def send_discord_alert(alert_info: dict, image_bytes: bytes = None):
         "embeds": [embed]
     }
 
-    if not DISCORD_WEBHOOK_URL:
-        print(f"  [DISCORD] ⚠️ DISCORD_WEBHOOK_URL is not set. Skipping Discord dispatch.")
-        return False
-
     try:
         if image_bytes:
             files = {
@@ -254,38 +252,40 @@ def send_discord_alert(alert_info: dict, image_bytes: bytes = None):
             res = requests.post(DISCORD_WEBHOOK_URL, json=payload_json, timeout=8)
 
         if res.status_code in (200, 204):
-            print(f"  [DISCORD] 🚀 Emergency alert card dispatched successfully!")
+            print(f"  [DISCORD] Emergency alert card dispatched successfully.")
             log_alert_history(team_name, alert_info)
             return True
         else:
-            print(f"  [DISCORD] ❌ Webhook error: {res.status_code}")
+            print(f"  [DISCORD] Webhook returned status code: {res.status_code}")
             return False
     except Exception as e:
-        print(f"  [DISCORD] ❌ Webhook exception: {e}")
+        print(f"  [DISCORD] Webhook exception: {e}")
         return False
 
-# ==========================================
+# ==============================================================================
 # MQTT CALLBACKS
-# ==========================================
+# ==============================================================================
 
 def on_connect(client, userdata, flags, rc, properties=None):
+    """Subscribes to telemetry, alert, and heatmap topics upon connection."""
     if rc == 0:
-        print(f"[MQTT] Connected successfully to broker {BROKER}:{PORT}")
+        print(f"[MQTT] Connected cleanly to broker {BROKER}:{PORT}")
         subscriptions = [
             (TELEMETRY_TOPIC_FILTER, 0),
             (ALERT_TOPIC_FILTER, 1),
             (HEATMAP_TOPIC_FILTER, 0)
         ]
         client.subscribe(subscriptions)
-        print(f"[MQTT] Subscribed to:")
-        print(f"  - {TELEMETRY_TOPIC_FILTER}")
-        print(f"  - {ALERT_TOPIC_FILTER}")
-        print(f"  - {HEATMAP_TOPIC_FILTER}")
+        print(f"[MQTT] Subscribed to topic patterns:")
+        print(f"  - {TELEMETRY_TOPIC_FILTER} (QoS 0)")
+        print(f"  - {ALERT_TOPIC_FILTER} (QoS 1)")
+        print(f"  - {HEATMAP_TOPIC_FILTER} (QoS 0)")
     else:
         print(f"[MQTT] Connection failed with error code: {rc}")
 
 
 def on_message(client, userdata, msg):
+    """Processes incoming MQTT messages based on topic category."""
     global last_alert_time_by_team, pending_alert_by_team
     now = time.time()
     topic = msg.topic
@@ -295,25 +295,19 @@ def on_message(client, userdata, msg):
         parts = topic.split('/')
         team = parts[1] if len(parts) >= 2 else "unknown"
 
-        # Case 1: Periodic Telemetry -> forward to InfluxDB
+        # 1. Periodic telemetry: persist metrics to InfluxDB
         if "telemetry" in topic:
             metrics = payload.get("metrics", {})
             state   = payload.get("state", "UNKNOWN")
             influx_ok = forward_to_influx(team, metrics)
-            print(f"[TELEMETRY] Node '{team}' [{state}] Max: {metrics.get('max_temp')}°C | ΔT/Δt: {metrics.get('rate_of_rise', 0.0):+.2f}°C/s | InfluxDB: {'OK' if influx_ok else 'FAILED (Saved to CSV)'}")
+            print(f"[TELEMETRY] Node '{team}' [{state}] Max: {metrics.get('max_temp')}°C | ΔT/Δt: {metrics.get('rate_of_rise', 0.0):+.2f}°C/s | InfluxDB: {'OK' if influx_ok else 'FAILED'}")
 
-        # Case 2: Fire Alert Received
+        # 2. Fire alert notification: store metadata and await heatmap
         elif "alerts" in topic:
-            print(f"\n🔥 [FIRE ALERT RECEIVED] From '{team}' | Max: {payload.get('max_temp')}°C | Hot Pixels: {payload.get('hot_pixels')}")
+            print(f"\n[FIRE ALERT] Incoming from '{team}' | Max: {payload.get('max_temp')}°C | Hot Pixels: {payload.get('hot_pixels')}")
             pending_alert_by_team[team] = payload
 
-            # If no heatmap arrives within cooldown or image is delayed, send text card
-            last_alert_time = last_alert_time_by_team.get(team, 0)
-            if (now - last_alert_time) >= ALERT_COOLDOWN_SECONDS and not payload.get("has_heatmap"):
-                # We can wait briefly for heatmap or dispatch if none expected
-                pass
-
-        # Case 3: Thermal Heatmap Received
+        # 3. Thermal heatmap frame: decode Base64 and dispatch Discord alert
         elif "heatmaps" in topic:
             last_alert_time = last_alert_time_by_team.get(team, 0)
             if (now - last_alert_time) >= ALERT_COOLDOWN_SECONDS:
@@ -329,21 +323,21 @@ def on_message(client, userdata, msg):
                 b64_image = payload.get("image_base64", "")
                 image_bytes = base64.b64decode(b64_image) if b64_image else None
 
-                print(f"[DISCORD] Dispatching Alert + Thermal Heatmap for '{team}' to Discord...")
+                print(f"[DISCORD] Dispatching alert and heatmap for '{team}'...")
                 send_discord_alert(alert_data, image_bytes)
                 if team in pending_alert_by_team:
                     del pending_alert_by_team[team]
 
     except Exception as e:
-        print(f"[ERROR] Failed processing MQTT message on topic '{topic}': {e}")
+        print(f"[ERROR] Failed processing MQTT message on '{topic}': {e}")
 
-# ==========================================
-# MAIN ENTRY POINT
-# ==========================================
+# ==============================================================================
+# MAIN APPLICATION LOOP
+# ==============================================================================
 
 def main():
     print("=" * 65)
-    print("🚀 Central MQTT Subscriber Bridge Starting")
+    print("Central MQTT Subscriber Bridge Starting")
     print(f"Target Broker: {BROKER}:{PORT}")
     print(f"InfluxDB:      {INFLUXDB_URL}")
     print(f"Fallback CSV:  {INFLUX_FAILED_FILE}")
@@ -358,15 +352,16 @@ def main():
     client.on_message = on_message
 
     client.connect(BROKER, PORT)
-    print("\nBridge is actively listening. Press Ctrl+C to stop.\n")
+    print("\nSubscriber Bridge active. Press Ctrl+C to terminate.\n")
 
     try:
         client.loop_forever()
     except KeyboardInterrupt:
-        print("\n[STOP] Shutting down Subscriber Bridge...")
+        print("\n[SYSTEM] Terminating Subscriber Bridge...")
     finally:
         client.disconnect()
-        print("[MQTT] Disconnected cleanly.")
+        print("[MQTT] Disconnected from broker cleanly.")
+
 
 if __name__ == "__main__":
     main()

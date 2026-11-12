@@ -1,3 +1,14 @@
+"""
+ECE490: Internet of Things - University of Thessaly
+Discord Webhook Alert Test Utility
+Student: Kyriaki Nikolopoulou
+
+Description:
+Standalone test script to verify Discord Webhook configuration. Generates a
+synthetic 24x32 thermal frame with a simulated heat signature in RAM (BytesIO)
+and dispatches an emergency notification card with image attachment.
+"""
+
 import os
 import requests
 import json
@@ -8,7 +19,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-# Optional loading of .env file
+# Optional environment variable support
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -17,11 +28,11 @@ except ImportError:
 
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
-def generate_sample_heatmap():
-    """Generates a dummy 24x32 thermal matrix for testing."""
-    # Create ambient background around 22-25°C
+def generate_sample_heatmap() -> bytes:
+    """Generates a synthetic 24x32 thermal matrix for testing."""
+    # Ambient baseline temperature (22-25°C)
     data = np.random.normal(loc=23.5, scale=1.0, size=(24, 32))
-    # Create a hot spot representing a flame/heat source
+    # Simulated localized heat source (flame anomaly)
     data[10:16, 14:20] += np.random.normal(loc=35.0, scale=3.0, size=(6, 6))
     
     fig, ax = plt.subplots(figsize=(5, 3.8))
@@ -31,7 +42,7 @@ def generate_sample_heatmap():
     cbar.ax.yaxis.set_tick_params(color='white')
     plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white')
     
-    ax.set_title(f"🔥 Thermal Heatmap - {datetime.now().strftime('%H:%M:%S')}", color='white', pad=10)
+    ax.set_title(f"Thermal Heatmap - {datetime.now().strftime('%H:%M:%S')}", color='white', pad=10)
     fig.patch.set_facecolor('#1e1f22')
     ax.set_facecolor('#1e1f22')
     ax.tick_params(colors='white')
@@ -43,13 +54,18 @@ def generate_sample_heatmap():
     return buf.getvalue()
 
 def send_test_discord_alert():
-    print("[TEST] Generating sample thermal heatmap...")
+    """Dispatches a mock emergency notification card to Discord."""
+    if not WEBHOOK_URL:
+        print("[ERROR] DISCORD_WEBHOOK_URL environment variable is not configured.")
+        return
+
+    print("[TEST] Generating synthetic thermal heatmap...")
     img_bytes = generate_sample_heatmap()
     
     embed = {
         "title": "🚨 THERMAL ANOMALY / FIRE DETECTED",
         "description": "**Προσοχή:** Εντοπίστηκε απότομη αύξηση θερμοκρασίας στον θερμικό αισθητήρα!",
-        "color": 15158332,  # Vibrant Red
+        "color": 15158332,
         "fields": [
             {
                 "name": "🌡️ Μέγιστη Θερμοκρασία",
@@ -102,17 +118,16 @@ def send_test_discord_alert():
         "files[0]": ("heatmap.png", img_bytes, "image/png")
     }
     
-    if not WEBHOOK_URL:
-        print("❌ Σφάλμα: Δεν έχει οριστεί το DISCORD_WEBHOOK_URL (στο .env ή στις μεταβλητές συστήματος).")
-        return
-
-    print("[TEST] Sending test notification to Discord Webhook...")
-    response = requests.post(WEBHOOK_URL, files=files)
-    
-    if response.status_code in (200, 204):
-        print("✅ Επιτυχία! Το δοκιμαστικό μήνυμα στάλθηκε στο Discord κανάλι #fire-alerts.")
-    else:
-        print(f"❌ Σφάλμα κατά την αποστολή: {response.status_code} - {response.text}")
+    print(f"[TEST] Sending Webhook request to Discord...")
+    try:
+        response = requests.post(WEBHOOK_URL, files=files, timeout=10)
+        if response.status_code in (200, 204):
+            print("[SUCCESS] Discord notification card delivered successfully!")
+        else:
+            print(f"[FAILED] Webhook returned status code: {response.status_code}")
+            print(f"Response: {response.text}")
+    except Exception as e:
+        print(f"[ERROR] Webhook request exception: {e}")
 
 if __name__ == "__main__":
     send_test_discord_alert()
