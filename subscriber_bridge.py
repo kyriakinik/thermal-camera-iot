@@ -154,13 +154,13 @@ def forward_to_influx(team: str, metrics: dict) -> bool:
         f"rate_of_rise={rate_of_rise:.2f}"
     )
 
-    db_target = f"{team}_db" if team else DEFAULT_DB
+    db_target = DEFAULT_DB if DEFAULT_DB else f"{team}_db"
 
     try:
         res = requests.post(
             f"{INFLUXDB_URL}/write",
             params={"db": db_target},
-            auth=HTTPBasicAuth(team or DB_USERNAME, DB_PASSWORD),
+            auth=HTTPBasicAuth(DB_USERNAME or team, DB_PASSWORD),
             data=line,
             timeout=3.0
         )

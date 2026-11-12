@@ -76,7 +76,6 @@ thermal-camera-iot/
 ├── subscriber_bridge.py              # Central MQTT Subscriber: InfluxDB ingestion & Discord emergency alerts
 ├── thermal_node.service              # Linux systemd service unit for edge node auto-start
 ├── subscriber_bridge.service         # Linux systemd service unit for central subscriber bridge
-├── discord_notifier.py               # Standalone MQTT-to-Discord bridge listener (legacy/alternative)
 ├── test_discord.py                   # Test script for Discord Webhook verification
 ├── camera_test.py                    # Step 0: Initial camera test & calibration
 ├── photos/                           # Thermal heatmap captures from tests
